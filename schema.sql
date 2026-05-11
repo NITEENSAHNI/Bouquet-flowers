@@ -1,0 +1,6 @@
+CREATE TABLE bouquets (
+  id TEXT PRIMARY KEY,
+  payload TEXT NOT NULL,
+  views INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

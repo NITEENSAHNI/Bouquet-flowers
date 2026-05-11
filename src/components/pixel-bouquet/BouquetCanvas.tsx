@@ -13,210 +13,510 @@ interface Props {
   animate?: boolean;
 }
 
-// ── Canvas & SVG constants ─────────────────────────────────────────────────
-const CW = 260, CH = 300;
-// The grip point — where stems physically converge and ribbon sits
-const GX = 130, GY = 268;
-// Each flower SVG is 180×220. Bloom centre is at (90,88). Stem base at (90,218).
-const SVG_W = 180, SVG_H = 220;
-const BLOOM_X = 90, BLOOM_Y = 88;  // bloom centre in SVG space
-const STEM_X  = 90, STEM_Y  = 218; // stem base in SVG space
+// ── Canvas constants ───────────────────────────────────────────────────────
+const CW = 320;
+const CH = 340;
 
-// ── Slot definitions ───────────────────────────────────────────────────────
-// Each slot: [angleDeg, radiusPx, scale, tiltDeg]
-// angleDeg: degrees from straight up. negative=left, positive=right.
-// radiusPx: distance from GX,GY to bloom centre.
-// scale:    how large to render this flower (0.5–0.7 keeps blooms in canvas).
-// tiltDeg:  whole flower rotates around its stem base by this amount.
-//
-// KEY FIX: radius must be small enough that (GY - radius*cos(angle)) > ~40
-// so blooms stay in the upper 60% of canvas and stems fill the lower 40%.
+const GX = 160;
+const GY = 300;
+
+// ── Bouquet slots ──────────────────────────────────────────────────────────
+// [angleDeg, radius, scale, tiltDeg]
 const SLOTS: Record<number, [number, number, number, number][]> = {
-  1: [
-    [  0, 155, 0.65,   0],
-  ],
+  1: [[0, 160, 0.64, 0]],
+
   2: [
-    [-20, 148, 0.62, -16],
-    [ 18, 150, 0.64,  14],
+    [-16, 152, 0.6, -12],
+    [16, 156, 0.62, 12],
   ],
+
   3: [
-    [-28, 142, 0.60, -22],
-    [  2, 158, 0.66,   2],
-    [ 26, 144, 0.61,  20],
+    [-22, 146, 0.58, -18],
+    [0, 164, 0.66, 0],
+    [22, 150, 0.6, 18],
   ],
+
   4: [
-    [-34, 138, 0.57, -28],
-    [-11, 152, 0.63,  -9],
-    [ 12, 155, 0.65,  10],
-    [ 33, 136, 0.58,  26],
+    [-26, 142, 0.56, -22],
+    [-8, 156, 0.62, -6],
+    [10, 160, 0.64, 8],
+    [26, 144, 0.57, 22],
   ],
+
   5: [
-    [-38, 132, 0.55, -32],
-    [-18, 148, 0.61, -15],
-    [  0, 158, 0.66,   0],
-    [ 20, 150, 0.62,  16],
-    [ 38, 130, 0.56,  30],
+    [-30, 138, 0.54, -26],
+    [-14, 152, 0.6, -12],
+    [0, 166, 0.66, 0],
+    [15, 154, 0.61, 12],
+    [30, 140, 0.55, 26],
   ],
+
   6: [
-    [-42, 126, 0.53, -36],
-    [-23, 142, 0.59, -20],
-    [ -5, 154, 0.65,  -4],
-    [  9, 156, 0.65,   7],
-    [ 26, 144, 0.60,  22],
-    [ 42, 124, 0.54,  35],
+    [-32, 134, 0.52, -28],
+    [-18, 148, 0.58, -15],
+    [-4, 160, 0.64, -4],
+    [8, 162, 0.64, 6],
+    [20, 150, 0.59, 16],
+    [32, 136, 0.53, 28],
   ],
 };
+const STEM_ATTACH: Record<string, number> = {
+  rose: 34,
+  sunflower: 22,
+  tulip: 30,
+  daisy: 18,
+  lavender: 10,
+  lily: 26,
+  orchid: 24,
+  peony: 36,
+};
+type Pt = [number, number];
 
-// Convert angle+radius to canvas bloom-centre position
-function bloomPos(angleDeg: number, radius: number): [number, number] {
-  const rad = (angleDeg * Math.PI) / 180;
+// ── Bezier helpers ─────────────────────────────────────────────────────────
+function bezierPt(
+  p0: Pt,
+  p1: Pt,
+  p2: Pt,
+  p3: Pt,
+  t: number
+): Pt {
+  const mt = 1 - t;
+
   return [
-    GX + Math.sin(rad) * radius,
-    GY - Math.cos(rad) * radius,
+    mt * mt * mt * p0[0] +
+      3 * mt * mt * t * p1[0] +
+      3 * mt * t * t * p2[0] +
+      t * t * t * p3[0],
+
+    mt * mt * mt * p0[1] +
+      3 * mt * mt * t * p1[1] +
+      3 * mt * t * t * p2[1] +
+      t * t * t * p3[1],
   ];
 }
 
-const WRAP_COLORS = ["#c084fc","#fb7185","#60a5fa","#f59e0b","#34d399","#f472b6"];
+function bezierTan(
+  p0: Pt,
+  p1: Pt,
+  p2: Pt,
+  p3: Pt,
+  t: number
+): Pt {
+  const mt = 1 - t;
 
-export function BouquetCanvas({ flowers, size = "sm", animate = false }: Props) {
+  return [
+    3 *
+      (mt * mt * (p1[0] - p0[0]) +
+        2 * mt * t * (p2[0] - p1[0]) +
+        t * t * (p3[0] - p2[0])),
+
+    3 *
+      (mt * mt * (p1[1] - p0[1]) +
+        2 * mt * t * (p2[1] - p1[1]) +
+        t * t * (p3[1] - p2[1])),
+  ];
+}
+
+// ── Leaf generator ─────────────────────────────────────────────────────────
+function leafPath(
+  lx: number,
+  ly: number,
+  tanX: number,
+  tanY: number,
+  side: number,
+  size: number
+): string {
+  const nx = -tanY * side;
+  const ny = tanX * side;
+
+  const tipX =
+    lx + nx * 20 * size + tanX * -4 * size;
+
+  const tipY =
+    ly + ny * 20 * size + tanY * -4 * size;
+
+  const c1x =
+    lx + nx * 14 * size + tanX * -10 * size;
+
+  const c1y =
+    ly + ny * 14 * size + tanY * -10 * size;
+
+  const c2x =
+    lx + nx * 14 * size + tanX * 4 * size;
+
+  const c2y =
+    ly + ny * 14 * size + tanY * 4 * size;
+
+  return `
+    M ${lx} ${ly}
+    C ${c1x} ${c1y}, ${tipX} ${tipY}, ${tipX} ${tipY}
+    C ${c2x} ${c2y}, ${lx} ${ly}, ${lx} ${ly}
+    Z
+  `;
+}
+
+// ── Ribbon colours ─────────────────────────────────────────────────────────
+const WRAP_COLORS = [
+  "#c084fc",
+  "#fb7185",
+  "#60a5fa",
+  "#f59e0b",
+  "#34d399",
+  "#f472b6",
+];
+
+// ── Component ──────────────────────────────────────────────────────────────
+export function BouquetCanvas({
+  flowers,
+  size = "sm",
+  animate = false,
+}: Props) {
   const sm = size === "lg" ? 1.38 : 1;
-  const W = Math.round(CW * sm), H = Math.round(CH * sm);
-  const gx = GX * sm, gy = GY * sm;
+
+  const W = CW * sm;
+  const H = CH * sm;
+
+  const gx = GX * sm;
+  const gy = GY * sm;
 
   const count = Math.min(flowers.length, 6);
+
   const slotDefs = SLOTS[count] || [];
 
-  // Pre-compute per-flower layout
-  const layout = slotDefs.map(([angle, radius, scale, tilt]) => {
-    const [bx, by] = bloomPos(angle, radius * sm);
-    const innerScale = scale * sm;
-    // Top-left of the flower div so bloom centre lands at bx, by
-    const left = bx - BLOOM_X * innerScale;
-    const top  = by - BLOOM_Y * innerScale;
-    // Stem base on canvas (pivot point for tilt rotation)
-    const stemCanvasX = left + STEM_X * innerScale;
-    const stemCanvasY = left + STEM_Y * innerScale; // intentional: use left+... no
-    const stemCX = bx + (STEM_X - BLOOM_X) * innerScale;
-    const stemCY = by + (STEM_Y - BLOOM_Y) * innerScale;
-    // transform-origin relative to the div's top-left
-    const pivotX = stemCX - left;
-    const pivotY = stemCY - top;
-    return { left, top, innerScale, tilt, bx, by, stemCX, stemCY, pivotX, pivotY, scale };
-  });
+  // ── Compute bloom positions ─────────────────────────────────────────────
+  const blooms = slotDefs.map(
+    ([angle, radius, scale, tilt], i) => {
+      const a = (angle * Math.PI) / 180;
 
-  const Wrapper = animate ? motion.div : "div";
-  const wc = WRAP_COLORS[count - 1] || "#c084fc";
+      const bx =
+        gx + Math.sin(a) * radius * sm;
+
+      const by =
+        gy - Math.cos(a) * radius * sm;
+
+      return {
+        bx,
+        by,
+        sc: scale * sm,
+        rawScale: scale,
+        tilt,
+        flower: flowers[i],
+      };
+    }
+  );
+
+  const Wrapper = animate
+    ? motion.div
+    : "div";
+
+  const wc =
+    WRAP_COLORS[count - 1] || "#c084fc";
+
   const wdk = darken(wc, 0.35);
   const wlt = lighten(wc, 0.3);
 
   return (
     <div
       className="relative rounded-3xl shadow-2xl border border-white/80 overflow-hidden"
-      style={{ width: W, height: H, background: "linear-gradient(180deg,#fdf6ee 0%,#f5ede2 55%,#eef6f0 100%)" }}
+      style={{
+        width: W,
+        height: H,
+        background:
+          "linear-gradient(180deg,#fdf6ee 0%,#f5ede2 60%,#eef6f0 100%)",
+      }}
     >
       {/* Empty state */}
       {count === 0 && (
         <div className="absolute inset-3 rounded-2xl border-2 border-dashed border-rose-200/70 flex items-center justify-center text-center px-6">
-          <p className="font-serif text-rose-400/80 text-lg leading-snug">Add flowers to begin 🌱</p>
+          <p className="font-serif text-rose-400/80 text-lg leading-snug">
+            Add flowers to begin 🌱
+          </p>
         </div>
       )}
 
-      {/* Flowers — back to front */}
-      {flowers.slice(0, 6).map((f, i) => {
-        const L = layout[i];
-        if (!L) return null;
-        const renderer = RENDERERS[f.id];
-        if (!renderer) return null;
-        const uid = `${f.id}${i}${f.color.replace("#","")}`;
-        const svg = renderer(f.color, uid);
-
-        const motionProps = animate ? {
-          initial: { opacity: 0, scale: 0.4 },
-          animate: { opacity: 1, scale: 1 },
-          transition: { delay: i * 0.25, duration: 0.5, ease: "easeOut" as const },
-        } : {};
-
-        return (
-          <Wrapper
-            key={`${i}-${f.id}-${f.color}`}
-            {...motionProps}
-            style={{
-              position: "absolute",
-              left: L.left,
-              top: L.top,
-              width: SVG_W * L.innerScale,
-              height: SVG_H * L.innerScale,
-              // Rotate around stem base so flower leans outward from grip
-              transformOrigin: `${L.pivotX}px ${L.pivotY}px`,
-              transform: `rotate(${L.tilt}deg)`,
-              zIndex: i + 1,
-              overflow: "visible",
-            }}
-          >
-            <div
-              style={{
-                transform: `scale(${L.innerScale})`,
-                transformOrigin: "top left",
-                width: SVG_W,
-                height: SVG_H,
-              }}
-              dangerouslySetInnerHTML={{ __html: svg }}
-            />
-          </Wrapper>
-        );
-      })}
-
-      {/* Convergent stems — single SVG, all curves meet at grip */}
+      {/* Stems + leaves */}
       {count > 0 && (
         <svg
-          style={{ position:"absolute", left:0, top:0, pointerEvents:"none", zIndex:20 }}
-          width={W} height={H} viewBox={`0 0 ${W} ${H}`}
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            zIndex: 1,
+            overflow: "visible",
+          }}
+          width={W}
+          height={H}
+          viewBox={`0 0 ${W} ${H}`}
         >
-          {layout.map((L, i) => {
-            // Stem start: slightly above the stem base, in the direction away from grip
-            const dx = L.stemCX - gx;
-            const dy = L.stemCY - gy;
-            const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-            // Start point is stem base shifted ~20px outward from grip
-            const sx = L.stemCX + (dx / dist) * 12 * sm;
-            const sy = L.stemCY + (dy / dist) * 12 * sm;
-            // Bezier curves converge naturally
-            const cp1x = sx + (gx - sx) * 0.25;
-            const cp1y = sy + (gy - sy) * 0.15;
-            const cp2x = sx + (gx - sx) * 0.65;
-            const cp2y = sy + (gy - sy) * 0.80;
-            return (
-              <path
-                key={i}
-                d={`M${sx.toFixed(1)} ${sy.toFixed(1)} C${cp1x.toFixed(1)} ${cp1y.toFixed(1)} ${cp2x.toFixed(1)} ${cp2y.toFixed(1)} ${gx.toFixed(1)} ${gy.toFixed(1)}`}
-                stroke="#3d6b45"
-                strokeWidth={Math.max(2, 4 * L.scale * sm)}
-                fill="none"
-                strokeLinecap="round"
-              />
+          {blooms.map(
+            ({ bx, by, sc }, i) => {
+              // LOWER stem origin
+const flower = blooms[i]?.flower;
+
+const attach =
+  STEM_ATTACH[flower?.id || "rose"] ?? 28;
+
+const p0: Pt = [
+  bx,
+  by + attach * sc,
+];
+
+              const p3: Pt = [gx, gy];
+
+              const p1: Pt = [
+                bx + (gx - bx) * 0.15,
+                by + (gy - by) * 0.35,
+              ];
+
+              const p2: Pt = [
+                bx + (gx - bx) * 0.65,
+                by + (gy - by) * 0.78,
+              ];
+
+              const leafA = bezierPt(
+                p0,
+                p1,
+                p2,
+                p3,
+                0.35
+              );
+
+              const tanA = bezierTan(
+                p0,
+                p1,
+                p2,
+                p3,
+                0.35
+              );
+
+              const lenA =
+                Math.sqrt(
+                  tanA[0] * tanA[0] +
+                    tanA[1] * tanA[1]
+                ) || 1;
+
+              const leafB = bezierPt(
+                p0,
+                p1,
+                p2,
+                p3,
+                0.58
+              );
+
+              const tanB = bezierTan(
+                p0,
+                p1,
+                p2,
+                p3,
+                0.58
+              );
+
+              const lenB =
+                Math.sqrt(
+                  tanB[0] * tanB[0] +
+                    tanB[1] * tanB[1]
+                ) || 1;
+
+              return (
+                <g key={i}>
+                  {/* Stem */}
+                  <path
+                    d={`
+                      M ${p0[0]} ${p0[1]}
+                      C ${p1[0]} ${p1[1]},
+                        ${p2[0]} ${p2[1]},
+                        ${p3[0]} ${p3[1]}
+                    `}
+                    stroke="#3d6b45"
+                    strokeWidth={Math.max(
+                      2,
+                      3.2 * sc
+                    )}
+                    fill="none"
+                    strokeLinecap="round"
+                  />
+
+                  {/* Leaf 1 */}
+                  <path
+                    d={leafPath(
+                      leafA[0],
+                      leafA[1],
+                      tanA[0] / lenA,
+                      tanA[1] / lenA,
+                      i % 2 === 0 ? -1 : 1,
+                      sc * 0.9
+                    )}
+                    fill="#4f7f57"
+                  />
+
+                  {/* Leaf 2 */}
+                  <path
+                    d={leafPath(
+                      leafB[0],
+                      leafB[1],
+                      tanB[0] / lenB,
+                      tanB[1] / lenB,
+                      i % 2 === 0 ? 1 : -1,
+                      sc * 0.75
+                    )}
+                    fill="#5b8d63"
+                  />
+                </g>
+              );
+            }
+          )}
+
+          {/* Ribbon */}
+          <rect
+            x={gx - 18}
+            y={gy - 4}
+            width={36}
+            height={26}
+            rx={3}
+            fill={wc}
+          />
+
+          <rect
+            x={gx - 4}
+            y={gy - 4}
+            width={8}
+            height={26}
+            fill={wdk}
+          />
+
+          <path
+            d={`
+              M${gx - 18},${gy + 10}
+              C${gx - 32},${gy}
+              ${gx - 40},${gy - 8}
+              ${gx - 28},${gy - 14}
+              C${gx - 16},${gy - 20}
+              ${gx - 6},${gy - 4}
+              ${gx},${gy + 2}
+            `}
+            fill={wlt}
+          />
+
+          <path
+            d={`
+              M${gx + 18},${gy + 10}
+              C${gx + 32},${gy}
+              ${gx + 40},${gy - 8}
+              ${gx + 28},${gy - 14}
+              C${gx + 16},${gy - 20}
+              ${gx + 6},${gy - 4}
+              ${gx},${gy + 2}
+            `}
+            fill={wlt}
+          />
+
+          <circle
+            cx={gx}
+            cy={gy + 2}
+            r={5}
+            fill={wdk}
+          />
+        </svg>
+      )}
+
+      {/* Flowers */}
+      {blooms
+        .sort(
+          (a, b) =>
+            a.rawScale - b.rawScale
+        )
+        .map(
+          (
+            {
+              bx,
+              by,
+              sc,
+              tilt,
+              flower,
+              rawScale,
+            },
+            i
+          ) => {
+            if (!flower) return null;
+
+            const renderer =
+              RENDERERS[flower.id];
+
+            if (!renderer) return null;
+
+            const uid = `${flower.id}${i}${flower.color.replace(
+              "#",
+              ""
+            )}`;
+
+            const svg = renderer(
+              flower.color,
+              uid
             );
-          })}
-        </svg>
-      )}
 
-      {/* Ribbon — sits exactly at grip point, z above stems */}
-      {count > 0 && (
-        <svg
-          style={{ position:"absolute", left:0, top:0, pointerEvents:"none", zIndex:30 }}
-          width={W} height={H} viewBox={`0 0 ${W} ${H}`}
-        >
-          {/* Body */}
-          <rect x={gx-18*sm} y={gy-4*sm} width={36*sm} height={26*sm} rx={3*sm} fill={wc}/>
-          {/* Centre crease */}
-          <rect x={gx-4*sm} y={gy-4*sm} width={8*sm} height={26*sm} fill={wdk}/>
-          {/* Left bow */}
-          <path d={`M${gx-18*sm} ${gy+8*sm} C${gx-30*sm} ${gy-2*sm} ${gx-36*sm} ${gy-10*sm} ${gx-26*sm} ${gy-14*sm} C${gx-16*sm} ${gy-18*sm} ${gx-8*sm} ${gy-4*sm} ${gx} ${gy+2*sm}`} fill={wlt}/>
-          {/* Right bow */}
-          <path d={`M${gx+18*sm} ${gy+8*sm} C${gx+30*sm} ${gy-2*sm} ${gx+36*sm} ${gy-10*sm} ${gx+26*sm} ${gy-14*sm} C${gx+16*sm} ${gy-18*sm} ${gx+8*sm} ${gy-4*sm} ${gx} ${gy+2*sm}`} fill={wlt}/>
-          {/* Knot */}
-          <circle cx={gx} cy={gy+2*sm} r={5*sm} fill={wdk}/>
-        </svg>
-      )}
+            const motionProps = animate
+              ? {
+                  initial: {
+                    opacity: 0,
+                    scale: 0.4,
+                  },
+                  animate: {
+                    opacity: 1,
+                    scale: 1,
+                  },
+                  transition: {
+                    delay: i * 0.2,
+                    duration: 0.5,
+                    ease:
+                      "easeOut" as const,
+                  },
+                }
+              : {};
+
+            return (
+              <Wrapper
+                key={`${i}-${flower.id}`}
+                {...motionProps}
+                style={{
+                  position: "absolute",
+                  left: bx,
+                  top: by,
+
+                transform: `translate(-50%, -50%)`,
+                  transformOrigin:
+                    "center center",
+
+                  zIndex:
+                    Math.round(
+                      rawScale * 100
+                    ) + 5,
+
+                  overflow: "visible",
+
+                  pointerEvents: "none",
+                }}
+              >
+<div
+  style={{
+    transform: `
+      scale(${sc})
+      rotate(${tilt}deg)
+    `,
+    transformOrigin: "center center",
+
+    width: 180,
+    height: 220,
+
+    overflow: "hidden",
+  }}
+  dangerouslySetInnerHTML={{
+    __html: svg,
+  }}
+                />
+              </Wrapper>
+            );
+          }
+        )}
     </div>
   );
 }
